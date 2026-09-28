@@ -261,7 +261,13 @@ public class MainActivity extends Activity {
                             openCommentsAfterLoad = false;
                             handler.postDelayed(() -> web.evaluateJavascript(
                                     "window.__fbAutoOpenComments ? window.__fbAutoOpenComments() : false",
-                                    value -> addLog("💬 تم تجهيز قسم التعليقات للمنشور.")),
+                                    value -> {
+                                        if ("true".equals(value)) {
+                                            addLog("💬 تم تجهيز قسم التعليقات للمنشور.");
+                                        } else {
+                                            addLog("⏳ Facebook ما زال يحمّل التعليقات، جارٍ المحاولة مرة أخرى...");
+                                        }
+                                    }),
                                     1200);
                         }
                     }
@@ -588,6 +594,15 @@ public class MainActivity extends Activity {
 
                     String r =
                             decode(v);
+
+                    /*
+                     * Facebook ما زال يحمّل التعليقات
+                     */
+                    if (r.contains("\"state\":\"waiting\"")) {
+                        polls = 0;
+                        handler.postDelayed(worker, 1200);
+                        return;
+                    }
 
                     /*
                      * الصفحة غير مدعومة

@@ -5,7 +5,7 @@
   // Facebook يستخدم حاويات تمرير متعددة (ومنها نوافذ التحقق)،
   // وأي CSS عام على html/body قد يمنع سحب نافذة التحقق.
 
-  const S={busy:false,comment:null,stage:'idle',deadline:0};
+  const S={busy:false,comment:null,stage:'idle',deadline:0,commentWaits:0};
   const T=e=>(e&&(e.innerText||e.textContent)||'').replace(/\s+/g,' ').trim();
   const V=e=>!!(e&&e.offsetParent!==null);
   const B=root=>Array.from((root||document).querySelectorAll('button,[role="button"],a')).filter(V);
@@ -32,7 +32,7 @@
       return !!el;
     }catch(e){ return false; }
   };
-  function comments(){return Array.from(document.querySelectorAll('[role="article"]')).filter(V).filter(a=>F(a,['reply','رد'])||F(a,['like','إعجاب','اعجبني']));}
+  function comments(){return Array.from(document.querySelectorAll('[role="article"]')).filter(V).filter(a=>{const t=T(a).toLowerCase(); return F(a,['reply','رد'])||F(a,['like','إعجاب','اعجبني'])||/reply|رد|like|إعجاب|comment|تعليق/i.test(t);});}
   function done(c){return c&&c.dataset.fbAutoHandled==='1';}
   function mark(c){c.dataset.fbAutoHandled='1';}
   function name(c){let h=c.querySelector('h2,h3,h4,a[role="link"]');return T(h)||'حضرتك';}
@@ -62,29 +62,41 @@
   async function privateMsg(c,text){let m=F(c,['send message','إرسال رسالة','message']);if(!m)return {available:false,sent:false};m.click();await wait(900);let box=input();if(!box)return {available:true,sent:false,needConfirm:false};if(!type(box,text))return {available:true,sent:false};await wait(250);let send=F(document,['send','إرسال']);if(!send)return {available:true,sent:false};send.click();await wait(900);return {available:true,sent:true,needConfirm:true};}
   window.__fbAutoOpenComments=async function(){
     try{
-      // افتح تبويب/منطقة التعليقات من المنشور نفسه، ولا تلمس صندوق الكتابة.
-      const buttons=B(document);
-      let commentButton=buttons.find(b=>{
-        const t=T(b).toLowerCase();
-        return /^(comments?|التعليقات|تعليقات|comment|comments)/i.test(t) || /\bcomments?\b/.test(t);
-      });
-      if(commentButton){
-        commentButton.scrollIntoView({block:'center',inline:'nearest'});
-        await wait(250);
-        commentButton.click();
+      // Facebook قد يؤخر تحميل التعليقات؛ نحاول فتحها وفحصها عدة مرات قبل إعلان الفشل.
+      for(let attempt=0;attempt<6;attempt++){
+        const buttons=B(document);
+        let commentButton=buttons.find(b=>{
+          const t=((T(b)+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||''))).toLowerCase();
+          return /^(comments?|التعليقات|تعليقات|comment|comments)/i.test(t) || /\bcomments?\b|التعليقات|تعليقات/.test(t);
+        });
+        if(commentButton){
+          commentButton.scrollIntoView({block:'center',inline:'nearest'});
+          await wait(250);
+          commentButton.click();
+        }
         await wait(900);
+        const list=comments();
+        if(list.length){
+          list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+          S.commentWaits=0;
+          return true;
+        }
       }
-      const list=comments();
-      if(list.length){
-        list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
-      }
-      return !!list.length;
+      return false;
     }catch(e){return false;}
   };
   window.__fbAutoProcessNext=async function(pub,priv,alt,sendPrivate,publicEnabled){
     if(S.busy)return JSON.stringify({state:'busy'}); S.busy=true;
     try{
-      let c=comments().find(x=>!done(x)); if(!c){S.busy=false;return JSON.stringify({state:'done'});} S.comment=c;
+      let c=comments().find(x=>!done(x));
+      if(!c){
+        S.commentWaits=(S.commentWaits||0)+1;
+        S.busy=false;
+        if(S.commentWaits<=12) return JSON.stringify({state:'waiting',tries:S.commentWaits});
+        return JSON.stringify({state:'done'});
+      }
+      S.commentWaits=0;
+      S.comment=c;
       let like=F(c,['like','إعجاب','اعجبني']); let didLike=false; if(like&&!/unlike|إلغاء الإعجاب|تم الإعجاب/i.test(T(like))){like.click();didLike=true;await wait(450);}
       let msg=F(c,['send message','إرسال رسالة','message']); let publicDone=false, privateDone=false;
       if(publicEnabled){publicDone=await publicReply(c,pub);}
