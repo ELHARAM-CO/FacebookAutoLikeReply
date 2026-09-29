@@ -408,8 +408,7 @@ public class MainActivity extends Activity {
                                 url.hasFocus()
                                 || publicReply.hasFocus()
                                 || privateMessage.hasFocus()
-                                || noMessageReply.hasFocus()
-
+                                || noMessageReply.hasFocus();
 
                         if (keyboardVisible && !appFieldFocused) {
                             if (controlPanel.getVisibility() != View.GONE) {
