@@ -343,8 +343,7 @@ public class MainActivity extends Activity {
         android.view.ViewGroup.LayoutParams lp = web.getLayoutParams();
         if (lp != null) {
             lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = 0;
-            lp.weight = 1f;
+            lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
             web.setLayoutParams(lp);
         }
         web.setVisibility(View.VISIBLE);
