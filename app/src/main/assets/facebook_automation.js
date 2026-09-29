@@ -1,254 +1,253 @@
 (function(){
   if(window.__fbAutoReady)return; window.__fbAutoReady=true;
 
-  const S={busy:false,comment:null,stage:'idle',deadline:0,commentWaits:0,commentsOpened:false,sortHandled:false};
-  const T=e=>(e&&(e.innerText||e.textContent)||'').replace(/\s+/g,' ').trim();
-  const A=e=>e?((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')).replace(/\s+/g,' ').trim():'';
+  const S={
+    busy:false,
+    comment:null,
+    stage:'idle',
+    deadline:0,
+    commentWaits:0,
+    sortHandled:false,
+    sortBusy:false,
+    sortClicks:0
+  };
+
+  const T=e=>(e&&((e.innerText||e.textContent||'')+'' )).replace(/\s+/g,' ').trim();
+  const A=e=>((e&&((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')))||'').replace(/\s+/g,' ').trim();
   const V=e=>!!(e&&e.offsetParent!==null);
-  const B=root=>Array.from((root||document).querySelectorAll('button,[role="button"],a')).filter(V);
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const norm=s=>(s||'').replace(/\s+/g,' ').trim().toLowerCase();
 
-  function buttonText(e){
-    return (T(e)+' '+A(e)).replace(/\s+/g,' ').trim().toLowerCase();
+  function visible(root){
+    return Array.from((root||document).querySelectorAll('*')).filter(V);
   }
 
-  function F(root,words){
-    const wanted=words.map(w=>String(w).toLowerCase());
-    return B(root).find(b=>wanted.some(w=>buttonText(b).includes(w)));
-  }
-
-  // Facebook sometimes renders Like/Reply as a span/div inside the real
-  // clickable element rather than as a <button>.  Find the visible text or
-  // aria-label first, then climb to the nearest clickable ancestor.
-  function action(root,words){
-    const scope=root||document;
-    const wanted=words.map(w=>String(w).trim().toLowerCase());
-    const els=Array.from(scope.querySelectorAll('button,[role="button"],a,[role="link"],div,span'))
-      .filter(V)
-      .filter(e=>{
-        const text=T(e).toLowerCase();
-        const aria=(e.getAttribute('aria-label')||'').trim().toLowerCase();
-        const title=(e.getAttribute('title')||'').trim().toLowerCase();
-        return wanted.includes(text)||wanted.includes(aria)||wanted.includes(title);
-      });
-
-    els.sort((a,b)=>{
-      const aa=(T(a)||A(a)).length, bb=(T(b)||A(b)).length;
-      return aa-bb;
-    });
-
-    for(const e of els){
-      let p=e;
-      for(let i=0;i<5&&p;i++,p=p.parentElement){
-        if(!V(p)) continue;
-        const role=(p.getAttribute('role')||'').toLowerCase();
-        if(p.tagName==='BUTTON'||p.tagName==='A'||role==='button'||role==='link'||p.hasAttribute('tabindex')) return p;
+  function clickableAncestor(el,root){
+    let n=el;
+    for(let i=0;n&&i<7;i++,n=n.parentElement){
+      if(n===root?.parentElement) break;
+      const role=(n.getAttribute&&n.getAttribute('role'))||'';
+      const tag=(n.tagName||'').toLowerCase();
+      if(tag==='button'||tag==='a'||role==='button'||role==='link'||typeof n.onclick==='function'||n.tabIndex>=0){
+        return n;
       }
-      return e;
     }
-    return null;
+    return el;
   }
 
-  function actionPressed(el){
-    if(!el)return false;
-    const vals=[el.getAttribute('aria-pressed'),el.getAttribute('aria-checked'),el.getAttribute('data-pressed')];
-    if(vals.some(v=>v==='true'))return true;
-    return /^(unlike|إلغاء الإعجاب|تم الإعجاب|liked|liked by)/i.test(buttonText(el));
+  function exactish(text,re){
+    const s=norm(text);
+    return re.test(s) && s.length<=90;
   }
 
-  function exactVisible(root,words,roles){
-    const wanted=words.map(w=>String(w).trim().toLowerCase());
-    const scope=root||document;
-    let els=Array.from(scope.querySelectorAll(roles||'button,[role="button"],[role="radio"],label,div,span')).filter(V);
-    els=els.filter(e=>{
-      const text=T(e).toLowerCase();
-      const aria=(e.getAttribute('aria-label')||'').trim().toLowerCase();
-      return wanted.includes(text)||wanted.includes(aria);
-    });
-    els.sort((a,b)=>((T(a)||A(a)).length)-((T(b)||A(b)).length));
-    return els[0]||null;
-  }
+  // Finds an action inside a specific comment instead of searching the whole page.
+  // It first checks accessible labels, then short visible text nodes/elements.
+  function findAction(root,patterns){
+    if(!root)return null;
+    const els=visible(root);
+    const regs=patterns.map(x=>x instanceof RegExp?x:new RegExp(x,'i'));
 
-  function dialogForSort(){
-    const all=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],div,section')).filter(V);
-    const marker=all.find(e=>/(sort comments|ترتيب التعليقات)/i.test(T(e)) && T(e).length<1200);
-    if(!marker)return null;
-    let d=marker.closest('[role="dialog"],[aria-modal="true"]');
-    if(d)return d;
-    let p=marker;
-    for(let i=0;i<5&&p;i++,p=p.parentElement){
-      const t=T(p);
-      if(t.length<1800 && /(?:Most relevant|Newest|All comments|الأحدث|كل التعليقات)/i.test(t)) return p;
+    // Accessible name is the safest signal for Facebook controls.
+    for(const el of els){
+      const acc=A(el);
+      if(acc && regs.some(re=>re.test(norm(acc)))){
+        return clickableAncestor(el,root);
+      }
     }
-    return marker;
-  }
 
-  function radioSelected(el){
-    if(!el)return false;
-    if(el.getAttribute('aria-checked')==='true')return true;
-    const input=el.querySelector&&el.querySelector('input[type="radio"]');
-    if(input&&input.checked)return true;
-    return false;
-  }
-
-  async function ensureNewestComments(){
-    // Handle the sort dialog at most once per page/session.  The old flow
-    // reopened/clicked it on every retry, which caused Newest to be selected
-    // repeatedly.
-    if(S.sortHandled)return true;
-
-    for(let attempt=0;attempt<12;attempt++){
-      const dialog=dialogForSort();
-      if(!dialog){
-        if(comments().length){
-          S.sortHandled=true;
-          return true;
-        }
-        await wait(350);
-        continue;
+    // Prefer small elements whose own visible text is the action label.
+    const candidates=[];
+    for(const el of els){
+      const own=Array.from(el.childNodes||[]).filter(n=>n.nodeType===3).map(n=>n.textContent||'').join(' ').trim();
+      const txt=norm(own||T(el));
+      if(!txt || txt.length>90)continue;
+      if(regs.some(re=>exactish(txt,re))){
+        candidates.push({el,score:(own?0:10)+txt.length});
       }
-
-      const newest=exactVisible(dialog,['Newest','الأحدث','التعليقات الأحدث'],'[role="radio"],button,[role="button"],label,div,span');
-      if(newest && !radioSelected(newest)){
-        newest.click();
-        await wait(500);
-      }
-
-      const ok=exactVisible(dialog,['OK','موافق','حسنًا','حسناً'],'button,[role="button"],div,span');
-      if(ok){
-        ok.click();
-        S.sortHandled=true;
-        await wait(1400);
-        return true;
-      }
-      await wait(500);
     }
-    return S.sortHandled;
+    candidates.sort((a,b)=>a.score-b.score);
+    return candidates.length?clickableAncestor(candidates[0].el,root):null;
   }
 
   function comments(){
-    return Array.from(document.querySelectorAll('[role="article"]'))
-      .filter(V)
-      .filter(a=>{
-        // Ignore the global comment composer itself.
-        if(a.querySelector('textarea,[contenteditable="true"],[role="textbox"]')) return false;
-        const like=action(a,['Like','like','إعجاب','اعجبني']);
-        const reply=action(a,['Reply','reply','رد']);
-        return !!(like||reply);
-      });
+    const raw=Array.from(document.querySelectorAll('[role="article"]')).filter(V);
+    return raw.filter(a=>{
+      const t=(T(a)+' '+A(a)).toLowerCase();
+      return /(\blike\b|\breply\b|إعجاب|اعجبني|رد)/i.test(t);
+    });
   }
 
-  function done(c){return c&&c.dataset.fbAutoHandled==='1';}
-  function mark(c){if(c)c.dataset.fbAutoHandled='1';}
+  function done(c){return !!(c&&c.dataset&&c.dataset.fbAutoHandled==='1');}
+  function mark(c){if(c&&c.dataset)c.dataset.fbAutoHandled='1';}
+
   function name(c){
-    let h=c.querySelector('h2,h3,h4,a[role="link"]');
+    const h=c.querySelector('h2,h3,h4,a[role="link"]');
     return T(h)||'حضرتك';
   }
 
-  function input(root){
-    const scope=root||document;
-    const local=Array.from(scope.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
-      .filter(V).find(x=>!x.closest('[aria-hidden="true"]'));
-    if(local)return local;
-    return Array.from(document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
-      .filter(V).find(x=>!x.closest('[aria-hidden="true"]'));
+  function textboxes(root){
+    return Array.from((root||document).querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')).filter(V);
   }
 
-  function type(el,value){
+  function setValue(el,value){
     if(!el)return false;
-    el.focus();
-    if(el.tagName==='TEXTAREA'){
-      const p=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');
-      p&&p.set?p.set.call(el,value):el.value=value;
-    }else{
-      el.textContent=value;
-    }
-    el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));
-    el.dispatchEvent(new Event('change',{bubbles:true}));
-    return true;
+    try{
+      el.focus();
+      if(el.tagName==='TEXTAREA'){
+        const p=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');
+        if(p&&p.set)p.set.call(el,value); else el.value=value;
+      }else{
+        el.textContent=value;
+      }
+      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+      return true;
+    }catch(e){return false;}
+  }
+
+  function sendButtonNear(box,scope){
+    const root=scope||box?.parentElement||document;
+    const btn=findAction(root,[/^(send|إرسال)$/i,/^(comment|تعليق)$/i]);
+    if(btn)return btn;
+    const near=box?.parentElement?.parentElement;
+    return findAction(near,[/send|إرسال|comment|تعليق/i]);
+  }
+
+  function nearestTextboxForComment(c,before){
+    const after=textboxes(c);
+    const fresh=after.filter(x=>!before.includes(x));
+    if(fresh.length)return fresh[0];
+    // Facebook sometimes puts the reply composer beside the comment rather than inside it.
+    const cr=c.getBoundingClientRect();
+    const all=textboxes(document).filter(V).filter(x=>{
+      if(before.includes(x))return false;
+      const r=x.getBoundingClientRect();
+      return r.top>=cr.top-30 && r.top<=cr.bottom+220;
+    });
+    all.sort((a,b)=>Math.abs(a.getBoundingClientRect().top-cr.bottom)-Math.abs(b.getBoundingClientRect().top-cr.bottom));
+    return all[0]||null;
   }
 
   async function publicReply(c,text){
-    const r=action(c,['Reply','reply','رد']);
-    if(!r)return false;
-    r.scrollIntoView({block:'center',inline:'nearest'});
-    await wait(350);
-    r.click();
-    await wait(800);
-    const box=input(c);
+    if(!text)return false;
+    const reply=findAction(c,[/^(reply|رد)$/i]);
+    if(!reply)return false;
+
+    const before=textboxes(document);
+    reply.scrollIntoView({block:'center',inline:'nearest'});
+    reply.click();
+    await wait(650);
+
+    const box=nearestTextboxForComment(c,before);
     if(!box)return false;
     const msg=text.replace('[اسم العميل]',name(c));
-    if(!type(box,msg))return false;
+    if(!setValue(box,msg))return false;
     await wait(350);
 
-    // Prefer the send control belonging to the active composer, then fall
-    // back to a visible Send/Comment control on the page.
-    let send=null;
-    let p=box;
-    for(let i=0;i<6&&p&&!send;i++,p=p.parentElement){
-      send=action(p,['Send','send','إرسال','Comment','comment','تعليق']);
-    }
-    send=send||action(document,['Send','send','إرسال','Comment','comment','تعليق']);
-    if(send){
-      send.click();
-      await wait(1000);
-      return true;
-    }
-    box.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter'}));
-    await wait(1000);
+    const send=sendButtonNear(box,c);
+    if(send){send.click();await wait(900);return true;}
+
+    // Enter is scoped to the reply composer only; never use the main post composer.
+    box.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter',which:13,keyCode:13}));
+    await wait(900);
     return true;
   }
 
-  async function privateMsg(c,text){
-    // The message action may be rendered as a text link or a role=button.
-    const m=action(c,['Send message','send message','Message','message','إرسال رسالة','رسالة']);
-    if(!m)return {available:false,sent:false};
-    m.scrollIntoView({block:'center',inline:'nearest'});
-    await wait(350);
-    m.click();
-    await wait(1000);
-    const box=input(document);
-    if(!box)return {available:true,sent:false};
-    if(!type(box,text))return {available:true,sent:false};
-    await wait(350);
+  function findPrivateAction(c){
+    return findAction(c,[
+      /^(send message|message|إرسال رسالة|رسالة)$/i,
+      /^(message|رسالة)$/i
+    ]);
+  }
 
-    let send=null;
-    let p=box;
-    for(let i=0;i<7&&p&&!send;i++,p=p.parentElement){
-      send=action(p,['Send','send','إرسال']);
+  async function privateMsg(c,text){
+    const m=findPrivateAction(c);
+    if(!m)return {available:false,sent:false};
+    const before=textboxes(document);
+    m.scrollIntoView({block:'center',inline:'nearest'});
+    m.click();
+    await wait(900);
+
+    // Prefer a newly-created composer. Do not fall back to the post's main comment box.
+    let box=textboxes(document).find(x=>!before.includes(x));
+    if(!box){
+      const dialogs=Array.from(document.querySelectorAll('[role="dialog"]')).filter(V);
+      for(const d of dialogs){
+        const b=textboxes(d);
+        if(b.length){box=b[b.length-1];break;}
+      }
     }
-    send=send||action(document,['Send','send','إرسال']);
+    if(!box)return {available:true,sent:false};
+    if(!setValue(box,text))return {available:true,sent:false};
+    await wait(300);
+
+    const scope=box.closest('[role="dialog"]')||box.parentElement?.parentElement||document;
+    const send=sendButtonNear(box,scope);
     if(!send)return {available:true,sent:false};
     send.click();
-    await wait(1000);
+    await wait(900);
     return {available:true,sent:true,needConfirm:true};
   }
 
+  function findSortDialog(){
+    const els=visible(document);
+    return els.find(e=>{
+      const t=norm((T(e)+' '+A(e)));
+      return /most relevant|newest|all comments|الأكثر صلة|الأحدث|كل التعليقات/.test(t) && t.length<220;
+    })||null;
+  }
+
+  async function ensureNewestOnce(){
+    if(S.sortHandled||S.sortBusy)return S.sortHandled;
+    const dialog=findSortDialog();
+    if(!dialog)return false;
+    S.sortBusy=true;
+    try{
+      const newest=findAction(dialog,[/^(newest|الأحدث)$/i]);
+      if(newest){
+        const selected=/(checked|selected|aria-checked)/i.test(A(newest)+' '+(newest.getAttribute('aria-checked')||''));
+        if(!selected){newest.click();S.sortClicks++;await wait(250);}
+      }
+      const ok=findAction(dialog,[/^(ok|موافق)$/i]);
+      if(ok){ok.click();await wait(1000);S.sortHandled=true;return true;}
+      // Some Facebook variants close the menu as soon as Newest is selected.
+      if(newest){S.sortHandled=true;return true;}
+      return false;
+    }finally{S.sortBusy=false;}
+  }
+
+  window.__fbAutoHasHumanCheck=function(){
+    try{
+      const hay=(document.body?document.body.innerText:'')+' '+
+        Array.from(document.querySelectorAll('[aria-label],[title]')).map(e=>(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')).join(' ');
+      return /(confirm you.?re human|verify you.?re human|verify that you are human|i.?m not a robot|captcha|human verification|security check|تأكيد أنك إنسان|تأكيد انك انسان|تحقق من أنك إنسان|تحقق انك انسان|أنا لست روبوت|انا لست روبوت|اختبار أمان|اختبار امان)/i.test(hay);
+    }catch(e){return false;}
+  };
+
+  window.__fbAutoBringHumanCheckIntoView=function(){
+    try{
+      const re=/(confirm you.?re human|verify you.?re human|verify that you are human|i.?m not a robot|captcha|human verification|security check|تأكيد أنك إنسان|تأكيد انك انسان|تحقق من أنك إنسان|تحقق انك انسان|أنا لست روبوت|انا لست روبوت|اختبار أمان|اختبار امان)/i;
+      const all=Array.from(document.querySelectorAll('div,section,main,[role=dialog],[role=alert],iframe,[aria-label],[title]'));
+      const el=all.find(e=>{const t=((e.innerText||e.textContent||'')+' '+(e.getAttribute?.('aria-label')||'')+' '+(e.getAttribute?.('title')||'')).replace(/\s+/g,' ');return t&&re.test(t)&&e.offsetParent!==null;});
+      if(el&&el.scrollIntoView)el.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+      return !!el;
+    }catch(e){return false;}
+  };
+
   window.__fbAutoOpenComments=async function(){
     try{
-      for(let attempt=0;attempt<12;attempt++){
-        // Open the comments area only once.  Re-clicking it while Facebook is
-        // still rendering the sort dialog was the cause of repeated Newest dialogs.
-        if(!S.commentsOpened){
-          const commentButton=action(document,['Comments','comments','Comment','comment','التعليقات','تعليقات']);
-          if(commentButton){
-            commentButton.scrollIntoView({block:'center',inline:'nearest'});
-            await wait(300);
-            commentButton.click();
-            S.commentsOpened=true;
-            await wait(1000);
-          }
-        }
-
-        const newestDone=await ensureNewestComments();
+      S.sortHandled=false;S.sortBusy=false;S.sortClicks=0;
+      for(let attempt=0;attempt<8;attempt++){
+        await ensureNewestOnce();
         const list=comments();
-        if(newestDone && list.length){
-          document.activeElement&&document.activeElement.blur&&document.activeElement.blur();
-          list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
-          S.commentWaits=0;
-          return true;
-        }
-        await wait(900);
+        if(list.length){list[0].scrollIntoView({block:'center',inline:'nearest'});S.commentWaits=0;return true;}
+        const buttons=visible(document);
+        const commentButton=buttons.find(b=>{
+          const t=norm(T(b)||A(b));
+          return /^(comments?|التعليقات|تعليقات|comment|comments)/i.test(t) || /\bcomments?\b|التعليقات|تعليقات/.test(t);
+        });
+        if(commentButton){commentButton.scrollIntoView({block:'center',inline:'nearest'});await wait(250);commentButton.click();}
+        await wait(1000);
       }
       return false;
     }catch(e){return false;}
@@ -257,88 +256,61 @@
   window.__fbAutoProcessNext=async function(pub,priv,alt,sendPrivate,publicEnabled){
     if(S.busy)return JSON.stringify({state:'busy'});
     S.busy=true;
-
     try{
-      let c=comments().find(x=>!done(x));
+      if(!S.sortHandled){
+        const sorted=await ensureNewestOnce();
+        if(!sorted){S.busy=false;return JSON.stringify({state:'waiting',tries:1,reason:'sort'});}
+        await wait(500);
+      }
 
+      let c=comments().find(x=>!done(x));
       if(!c){
         S.commentWaits=(S.commentWaits||0)+1;
         S.busy=false;
         if(S.commentWaits<=15)return JSON.stringify({state:'waiting',tries:S.commentWaits});
         return JSON.stringify({state:'done'});
       }
+      S.commentWaits=0;S.comment=c;
 
-      S.commentWaits=0;
-      S.comment=c;
-
-      // REQUIRED ORDER: Like first, then Reply, then private message.
-      // Use a DOM/text/aria locator rather than screen coordinates so the
-      // action still works when Facebook changes the layout or scroll position.
-      let like=action(c,['Like','like','إعجاب','اعجبني']);
+      // Like is located and verified inside the current comment only.
+      let like=findAction(c,[/^(like|إعجاب|اعجبني)$/i]);
       let didLike=false;
-
-      if(like && !actionPressed(like) && !/(unlike|إلغاء الإعجاب|تم الإعجاب)/i.test(buttonText(like))){
+      if(like && !/unlike|إلغاء الإعجاب|تم الإعجاب|liked/i.test(A(like)+' '+T(like))){
         like.scrollIntoView({block:'center',inline:'nearest'});
-        await wait(350);
         like.click();
-        await wait(900);
-        // Verify the same action now reports a pressed/liked state.
-        const after=action(c,['Like','like','إعجاب','اعجبني','Unlike','unlike','إلغاء الإعجاب','تم الإعجاب']);
-        didLike=!!after && (actionPressed(after)||/(unlike|إلغاء الإعجاب|تم الإعجاب)/i.test(buttonText(after)));
+        await wait(650);
+        const after=findAction(c,[/^(like|إعجاب|اعجبني)$/i]);
+        didLike=!!after && /unlike|إلغاء الإعجاب|تم الإعجاب|liked/i.test(A(after)+' '+T(after));
       }
 
-      let msg=action(c,['Send message','send message','Message','message','إرسال رسالة','رسالة']);
-      let publicDone=false;
-
-      if(publicEnabled){
-        publicDone=await publicReply(c,pub);
-      }
+      let publicDone=false,privateDone=false;
+      const msg=findPrivateAction(c);
+      if(publicEnabled)publicDone=await publicReply(c,pub);
 
       if(!msg){
-        if(alt){
-          await publicReply(c,alt);
-          publicDone=true;
-        }
-        mark(c);
-        S.busy=false;
+        if(alt)publicDone=(await publicReply(c,alt))||publicDone;
+        mark(c);S.busy=false;
         return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:false});
       }
 
       if(sendPrivate){
-        let p=await privateMsg(c,priv);
-        if(!p.sent){
-          S.busy=false;
-          return JSON.stringify({state:'error',message:'تعذر إدخال أو إرسال الرسالة الخاصة.'});
-        }
-        S.stage='confirm';
-        S.deadline=Date.now()+15000;
-        S.busy=false;
+        const p=await privateMsg(c,priv);
+        if(!p.sent){S.busy=false;return JSON.stringify({state:'error',message:'تعذر إدخال أو إرسال الرسالة الخاصة لهذا التعليق.'});}
+        S.stage='confirm';S.deadline=Date.now()+15000;S.busy=false;
         return JSON.stringify({state:'confirm',like:didLike,public:publicDone});
       }
 
-      mark(c);
-      S.busy=false;
-      return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:false});
-
-    }catch(e){
-      S.busy=false;
-      return JSON.stringify({state:'error',message:String(e)});
-    }
+      mark(c);S.busy=false;
+      return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:privateDone});
+    }catch(e){S.busy=false;return JSON.stringify({state:'error',message:String(e)});}
   };
 
   window.__fbAutoConfirmDialog=function(){
     if(S.stage!=='confirm')return JSON.stringify({state:'no'});
-    let b=F(document,['ok','موافق','done','تم','close','إغلاق']);
-    if(b){
-      b.click();
-      mark(S.comment);
-      S.stage='idle';
-      return JSON.stringify({state:'confirmed'});
-    }
-    if(Date.now()>S.deadline){
-      S.stage='idle';
-      return JSON.stringify({state:'timeout'});
-    }
+    const dialog=Array.from(document.querySelectorAll('[role="dialog"]')).filter(V).pop()||document;
+    const b=findAction(dialog,[/^(ok|موافق|done|تم|close|إغلاق)$/i]);
+    if(b){b.click();mark(S.comment);S.stage='idle';return JSON.stringify({state:'confirmed'});}
+    if(Date.now()>S.deadline){S.stage='idle';return JSON.stringify({state:'timeout'});}
     return JSON.stringify({state:'no'});
   };
 })();
