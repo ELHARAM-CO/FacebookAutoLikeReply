@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
     boolean humanCheckMode = false;
     boolean openCommentsAfterLoad = false;
     boolean postPrepared = false;
+    String loadedPostUrl = "";
 
     int processed = 0;
     int likes = 0;
@@ -268,10 +269,13 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
 
-        // Fit Facebook content to the available WebView width.
-        s.setLoadWithOverviewMode(false);
-        s.setUseWideViewPort(false);
+        // Keep the Facebook page responsive and fill the complete WebView width.
+        // Android recommends match_parent sizing for WebView; the viewport settings
+        // below prevent the page from behaving like a narrow desktop canvas.
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
         web.setInitialScale(0);
+        web.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
 
         web.setWebViewClient(
                 new WebViewClient() {
@@ -284,19 +288,8 @@ public class MainActivity extends Activity {
 
                         exitHumanCheckMode();
                         inject();
-                        if (openCommentsAfterLoad) {
-                            openCommentsAfterLoad = false;
-                            handler.postDelayed(() -> web.evaluateJavascript(
-                                    "window.__fbAutoOpenComments ? window.__fbAutoOpenComments() : false",
-                                    value -> {
-                                        if ("true".equals(value)) {
-                                            addLog("💬 تم تجهيز قسم التعليقات للمنشور.");
-                                        } else {
-                                            addLog("⏳ Facebook ما زال يحمّل التعليقات، جارٍ المحاولة مرة أخرى...");
-                                        }
-                                    }),
-                                    1200);
-                        }
+                        refreshWebBounds();
+                        addLog("📐 تم ضبط مساحة Facebook على كامل الجزء المخصص لها.");
                     }
                 }
         );
@@ -345,6 +338,23 @@ public class MainActivity extends Activity {
     }
 
 
+    void refreshWebBounds() {
+        if (web == null) return;
+        android.view.ViewGroup.LayoutParams lp = web.getLayoutParams();
+        if (lp != null) {
+            lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = 0;
+            lp.weight = 1f;
+            web.setLayoutParams(lp);
+        }
+        web.setVisibility(View.VISIBLE);
+        web.requestLayout();
+        web.post(() -> {
+            web.requestLayout();
+            web.invalidate();
+        });
+    }
+
     void enterHumanCheckMode() {
         humanCheckMode = true;
         if (controlPanel.getVisibility() != View.GONE) {
@@ -369,6 +379,7 @@ public class MainActivity extends Activity {
         if (resizeHandle.getVisibility() != View.VISIBLE) {
             resizeHandle.setVisibility(View.VISIBLE);
         }
+        refreshWebBounds();
     }
 
     void setupHumanCheckWatcher() {
@@ -471,29 +482,26 @@ public class MainActivity extends Activity {
     void openPost() {
 
         save();
-
-        String u =
-                url.getText()
-                        .toString()
-                        .trim();
+        String u = url.getText().toString().trim();
 
         if (u.isEmpty()) {
+            addLog("أدخل رابط المنشور أولًا.");
+            return;
+        }
 
-            addLog(
-                    "أدخل رابط المنشور أولًا."
-            );
-
+        String current = web.getUrl() == null ? "" : web.getUrl();
+        if (!current.isEmpty() && current.startsWith(u)) {
+            addLog("ℹ️ المنشور مفتوح بالفعل؛ لن أعيد تحميله ولن أفتح ترتيب التعليقات مرة أخرى.");
+            refreshWebBounds();
             return;
         }
 
         exitHumanCheckMode();
-        openCommentsAfterLoad = true;
+        openCommentsAfterLoad = false;
         postPrepared = false;
+        loadedPostUrl = u;
         web.loadUrl(u);
-
-        addLog(
-                "فتح المنشور المحدد."
-        );
+        addLog("فتح المنشور المحدد. ترتيب التعليقات لن يفتح تلقائيًا إلا عند بدء المعالجة.");
     }
 
     void start() {
@@ -556,6 +564,8 @@ public class MainActivity extends Activity {
         }
 
         running = true;
+        postPrepared = false;
+        polls = 0;
 
         processed = 0;
         likes = 0;
@@ -570,7 +580,7 @@ public class MainActivity extends Activity {
         );
 
         addLog(
-                "بدأت معالجة المنشور الحالي فقط — جاري تجهيز التعليقات واختيار «الأحدث» تلقائيًا."
+                "بدأت معالجة المنشور الحالي فقط — فحص الصفحة أولًا، ثم اختيار «الأحدث» تلقائيًا مرة واحدة."
         );
 
         worker = new Runnable() {
@@ -592,258 +602,77 @@ public class MainActivity extends Activity {
 
         if (!postPrepared) {
             web.evaluateJavascript(
-                    "window.__fbAutoPreparePost ? window.__fbAutoPreparePost() : JSON.stringify({state:\"error\",message:\"أداة تجهيز المنشور غير موجودة.\"})",
+                    "window.__fbAutoPreflight ? window.__fbAutoPreflight() : JSON.stringify({state:\"error\",message:\"دالة فحص الصفحة غير موجودة.\"})",
                     v -> {
                         if (!running) return;
                         String r = decode(v);
                         if (r.contains("\"state\":\"ready\"")) {
                             postPrepared = true;
-                            addLog("✅ " + extractMessage(r, "تم تجهيز التعليقات."));
-                            handler.postDelayed(worker, 400);
-                        } else if (r.contains("\"state\":\"waiting\"")) {
-                            addLog("⏳ " + extractMessage(r, "التعليقات لم تجهز بعد؛ سأحاول مرة أخرى."));
-                            handler.postDelayed(worker, 1200);
-                        } else if (r.contains("\"state\":\"error\"")) {
-                            finish("⚠️ توقف قبل معالجة أي تعليق: " + extractMessage(r, "تعذر تجهيز المنشور."));
+                            addLog("✅ " + extractMessage(r, "تم فحص الصفحة وتجهيز التعليقات."));
+                            handler.post(worker);
                         } else {
-                            addLog("⏳ لم تصل نتيجة تجهيز المنشور بعد؛ إعادة المحاولة.");
-                            handler.postDelayed(worker, 900);
+                            finish("⚠️ توقف الفحص قبل أي عملية: " + extractMessage(r, "تعذر تجهيز المنشور. راجع السجل ثم أعد المحاولة بعد الحل."));
                         }
                     }
             );
             return;
         }
 
-        String pub =
-                q(
-                        publicReply
-                                .getText()
-                                .toString()
-                );
+        String pub = q(publicReply.getText().toString());
+        String priv = q(privateMessage.getText().toString());
+        String alt = q(noMessageReply.getText().toString());
 
-        String priv =
-                q(
-                        privateMessage
-                                .getText()
-                                .toString()
-                );
+        String js = "window.__fbAutoProcessNext(" + pub + "," + priv + "," + alt + ","
+                + sendPrivate.isChecked() + "," + publicEnabled.isChecked() + "," + doLike.isChecked() + ")";
 
-        String alt =
-                q(
-                        noMessageReply
-                                .getText()
-                                .toString()
-                );
+        web.evaluateJavascript(js, v -> {
+            if (!running) return;
+            String r = decode(v);
 
-        String js =
-                "window.__fbAutoProcessNext("
-                        + pub + ","
-                        + priv + ","
-                        + alt + ","
-                        + sendPrivate.isChecked()
-                        + ","
-                        + publicEnabled.isChecked()
-                        + ","
-                        + doLike.isChecked()
-                        + ")";
-
-        web.evaluateJavascript(
-                js,
-                v -> {
-
-                    if (!running) {
-                        return;
-                    }
-
-                    String r =
-                            decode(v);
-
-                    /*
-                     * Facebook ما زال يحمّل التعليقات
-                     */
-                    if (r.contains("\"state\":\"waiting\"")) {
-                        polls = 0;
-                        handler.postDelayed(worker, 1200);
-                        return;
-                    }
-
-                    /*
-                     * الصفحة غير مدعومة
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"unsupported\""
-                            )
-                    ) {
-
-                        finish(
-                                "⚠️ لم يمكن تجهيز صفحة Facebook الحالية."
-                        );
-
-                        return;
-                    }
-
-                    /*
-                     * ما زالت العملية الحالية مشغولة
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"busy\""
-                            )
-                    ) {
-
-                        polls++;
-
-                        if (polls > 40) {
-
-                            finish(
-                                    "⚠️ لم تكتمل خطوة العميل في الوقت المتوقع؛ تم الإيقاف للمراجعة."
-                            );
-
-                        } else {
-
-                            handler.postDelayed(
-                                    worker,
-                                    500
-                            );
-                        }
-
-                        return;
-                    }
-
-                    /*
-                     * Facebook ينتظر تأكيد نافذة الخاص
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"confirm\""
-                            )
-                    ) {
-
-                        addLog(
-                                "⏳ في انتظار نافذة تأكيد Facebook بعد إرسال الخاص."
-                        );
-
-                        waitConfirm();
-
-                        return;
-                    }
-
-                    /*
-                     * انتهت التعليقات
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"done\""
-                            )
-                    ) {
-
-                        finish(
-                                "🏁 انتهت التعليقات القابلة للمعالجة في المنشور."
-                        );
-
-                        return;
-                    }
-
-                    /*
-                     * تمت معالجة تعليق بنجاح
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"processed\""
-                            )
-                    ) {
-
-                        processed++;
-
-                        if (
-                                r.contains(
-                                        "\"like\":true"
-                                )
-                        ) {
-
-                            likes++;
-                        }
-
-                        if (
-                                r.contains(
-                                        "\"public\":true"
-                                )
-                        ) {
-
-                            publicReplies++;
-                        }
-
-                        if (
-                                r.contains(
-                                        "\"private\":true"
-                                )
-                        ) {
-
-                            privateSent++;
-                        }
-
-                        updateCounters();
-
-                        addLog(
-                                "✅ اكتملت معالجة التعليق رقم "
-                                        + processed
-                                        + "."
-                        );
-
-                        /*
-                         * لو وصلنا للعدد المحدد
-                         */
-                        if (
-                                processed
-                                >=
-                                spinnerInt(limit, 10)
-                        ) {
-
-                            finish(
-                                    "🏁 تم الوصول إلى العدد المحدد من التعليقات."
-                            );
-
-                            return;
-                        }
-
-                        handler.postDelayed(
-                                worker,
-                                Math.max(
-                                        3000,
-                                        spinnerInt(delay, 10)
-                                                * 1000L
-                                )
-                        );
-
-                        return;
-                    }
-
-                    /*
-                     * حدث خطأ من JavaScript
-                     */
-                    if (
-                            r.contains(
-                                    "\"state\":\"error\""
-                            )
-                    ) {
-
-                        finish(
-                                "⚠️ " + extractMessage(r, "حدث خطأ غير محدد داخل صفحة Facebook.")
-                        );
-
-                        return;
-                    }
-
-                    /*
-                     * لم نحصل على حالة نهائية بعد
-                     */
-                    handler.postDelayed(
-                            worker,
-                            700
-                    );
+            if (r.contains("\"state\":\"waiting\"")) {
+                String msg = extractMessage(r, "الصفحة لم تجهز بعد.");
+                addLog("⏳ " + msg + " — سأنتظر بدل الوميض وإعادة المحاولة السريعة.");
+                finish("⚠️ توقفت للمراجعة لأن الصفحة لم تُجهز: " + msg);
+                return;
+            }
+            if (r.contains("\"state\":\"unsupported\"")) {
+                finish("⚠️ صفحة Facebook الحالية غير مدعومة: " + extractMessage(r, "صفحة غير مدعومة."));
+                return;
+            }
+            if (r.contains("\"state\":\"busy\"")) {
+                addLog("⏳ العملية السابقة ما زالت تعمل؛ سأنتظر 1500 مللي ثانية.");
+                handler.postDelayed(worker, 1500);
+                return;
+            }
+            if (r.contains("\"state\":\"confirm\"")) {
+                addLog("⏳ في انتظار نافذة تأكيد Facebook بعد إرسال الخاص.");
+                waitConfirm();
+                return;
+            }
+            if (r.contains("\"state\":\"done\"")) {
+                finish("🏁 انتهت التعليقات القابلة للمعالجة في المنشور.");
+                return;
+            }
+            if (r.contains("\"state\":\"processed\"")) {
+                processed++;
+                if (r.contains("\"like\":true")) likes++;
+                if (r.contains("\"public\":true")) publicReplies++;
+                if (r.contains("\"private\":true")) privateSent++;
+                updateCounters();
+                addLog("✅ " + extractMessage(r, "اكتملت معالجة التعليق رقم " + processed + "."));
+                if (processed >= spinnerInt(limit, 10)) {
+                    finish("🏁 تم الوصول إلى العدد المحدد من التعليقات.");
+                    return;
                 }
-        );
+                handler.postDelayed(worker, Math.max(1000, spinnerInt(delay, 10) * 1000L));
+                return;
+            }
+            if (r.contains("\"state\":\"error\"")) {
+                finish("⚠️ توقف بسبب خطأ واضح: " + extractMessage(r, "حدث خطأ داخل صفحة Facebook."));
+                return;
+            }
+            finish("⚠️ لم تصل نتيجة مفهومة من صفحة Facebook؛ تم الإيقاف للمراجعة. الرد: " + r);
+        });
     }
 
     void waitConfirm() {

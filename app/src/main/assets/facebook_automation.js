@@ -196,34 +196,68 @@
     return false;
   }
 
+  window.__fbAutoPreflight=async function(){
+    try{
+      if(window.__fbAutoHasHumanCheck && window.__fbAutoHasHumanCheck()){
+        return JSON.stringify({state:'error',message:'ظهرت شاشة تحقق بشرية. أكملها يدويًا أولًا، ثم اضغط بدء مرة أخرى.'});
+      }
+      const href=location.href||'';
+      if(!/facebook\.com/i.test(href)){
+        return JSON.stringify({state:'error',message:'WebView ليست على صفحة Facebook بعد. افتح المنشور ثم أعد الفحص.'});
+      }
+      // إذا كانت التعليقات والفرز جاهزين بالفعل لا نلمس الصفحة مرة أخرى.
+      if(S.sortDone && comments().length){
+        diag('الفحص نجح: التعليقات جاهزة و«الأحدث» تم اختياره سابقًا؛ لن أعيد فتح قائمة الترتيب.');
+        return JSON.stringify({state:'ready',message:S.lastDiag,count:comments().length});
+      }
+      const list=comments();
+      const sortVisible=!!exactOrContains(document,['sort comments','ترتيب التعليقات','comment sorting','ترتيب التعليقات حسب']);
+      const commentButton=!!exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
+      if(!list.length && !sortVisible && !commentButton){
+        diag('لم أجد بطاقة تعليق ولا زر فتح التعليقات ولا زر ترتيب التعليقات. يبدو أن المنشور لم يكتمل تحميله أو أن الصفحة الحالية ليست المنشور المطلوب.');
+        return JSON.stringify({state:'error',message:S.lastDiag});
+      }
+      // نعطي Facebook فرصة واحدة هادئة لعرض عناصر التعليقات، بدل حلقة وميض.
+      await wait(1200);
+      return await window.__fbAutoPreparePost();
+    }catch(e){
+      diag('خطأ في فحص الصفحة قبل البدء: '+(e&&e.message?e.message:String(e)));
+      return JSON.stringify({state:'error',message:S.lastDiag});
+    }
+  };
+
   window.__fbAutoPreparePost=async function(){
     try{
+      if(S.sortDone && comments().length){
+        diag('تم تجهيز التعليقات بالفعل؛ «الأحدث» مختار ولن أفتح ترتيب التعليقات مرة أخرى.');
+        return JSON.stringify({state:'ready',message:S.lastDiag,count:comments().length});
+      }
       S.openAttempts=(S.openAttempts||0)+1;
       let list=comments();
       if(!list.length){
         const commentButton=exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
         if(commentButton){
-          diag('لم تكن التعليقات مفتوحة؛ تم العثور على زر التعليقات وجاري فتحه.');
+          diag('تم العثور على زر التعليقات؛ سأفتحه مرة واحدة فقط.');
           await safeClick(commentButton);
-          await wait(1200);
+          await wait(1400);
         }else{
           diag('لم أجد زر فتح التعليقات في الصفحة الحالية.');
           return JSON.stringify({state:'error',message:S.lastDiag});
         }
       }
-      let sorted=await selectNewestOnce();
+      const sorted=await selectNewestOnce();
       if(!sorted){
-        return JSON.stringify({state:'waiting',message:S.lastDiag,tries:S.openAttempts});
+        return JSON.stringify({state:'error',message:S.lastDiag});
       }
-      await wait(500);
+      await wait(700);
       list=comments();
       if(list.length){
         try{list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});}catch(e){}
-        diag('تم تجهيز التعليقات بنجاح، والترتيب الحالي «الأحدث».');
+        diag('تم تجهيز التعليقات بنجاح، وتم اختيار «الأحدث» مرة واحدة.');
         return JSON.stringify({state:'ready',message:S.lastDiag,count:list.length});
       }
-      diag('تم اختيار «الأحدث»، لكن لم أجد بطاقات تعليقات قابلة للمعالجة حتى الآن.');
-      return JSON.stringify({state:'waiting',message:S.lastDiag,tries:S.openAttempts});
+      diag('تم اختيار «الأحدث»، لكن لم أجد بطاقات تعليقات قابلة للمعالجة. أوقفت التشغيل للمراجعة.');
+      return JSON.stringify({state:'error',message:S.lastDiag});
     }catch(e){
       diag('خطأ أثناء تجهيز المنشور: '+(e&&e.message?e.message:String(e)));
       return JSON.stringify({state:'error',message:S.lastDiag});
