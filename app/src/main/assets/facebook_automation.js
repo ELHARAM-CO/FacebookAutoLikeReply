@@ -68,15 +68,20 @@
   };
 
   function comments(){
-    const direct=Array.from(document.querySelectorAll('[role="article"]')).filter(V).filter(a=>{
+    const articles=Array.from(document.querySelectorAll('[role="article"]')).filter(V).filter(a=>{
       const t=norm(T(a));
-      return /\breply\b|\bرد\b|\blike\b|\bunlike\b|إعجاب|اعجبني/.test(t);
+      const hasAction=!!exactOrContains(a,['reply','رد']) || !!exactOrContains(a,['like','إعجاب','اعجبني'],['unlike','إلغاء الإعجاب','تم الإعجاب']);
+      const hasAvatar=!!a.querySelector('img');
+      return hasAction && (hasAvatar || /reply|رد|like|إعجاب|اعجبني/i.test(t));
     });
-    if(direct.length)return direct;
+    // احتفظ بالعناصر العليا فقط حتى لا تتم معالجة نفس العميل أكثر من مرة بسبب
+    // articles متداخلة داخل بطاقة التعليق.
+    const top=articles.filter(a=>!articles.some(b=>b!==a && b.contains(a)));
+    if(top.length)return top;
     return Array.from(document.querySelectorAll('div')).filter(V).filter(a=>{
       const r=exactOrContains(a,['reply','رد']);
-      const l=exactOrContains(a,['like','إعجاب','اعجبني']);
-      return !!r&&!!l&&T(a).length<1800;
+      const l=exactOrContains(a,['like','إعجاب','اعجبني'],['unlike','إلغاء الإعجاب','تم الإعجاب']);
+      return !!r&&!!l&&T(a).length<1800&&!!a.querySelector('img');
     }).slice(0,50);
   }
   function done(c){return c&&c.dataset.fbAutoHandled==='1';}
@@ -140,30 +145,38 @@
 
   async function selectNewestOnce(){
     if(S.sortDone)return true;
-    // لو نافذة الفرز مفتوحة بالفعل، اختر Newest مرة واحدة ثم OK.
-    const newest=exactOrContains(document,['newest','الأحدث','الأحدث أولاً','الأحدث أولاً']);
+
+    // أولًا: إذا كانت نافذة ترتيب التعليقات مفتوحة بالفعل، اختر Newest مرة واحدة.
+    let newest=exactOrContains(document,['newest','الأحدث','الأحدث أولاً']);
     if(newest){
       await safeClick(newest);
-      await wait(350);
+      await wait(450);
       const ok=exactOrContains(document,['ok','موافق','تم','done']);
-      if(ok)await safeClick(ok);
-      S.sortDone=true;
-      return true;
+      if(ok){
+        await safeClick(ok);
+        await wait(700);
+        S.sortDone=true;
+        return true;
+      }
+      return false;
     }
-    // وإلا افتح قائمة الفرز. هذا الجزء مستوحى من مبدأ المشروع الأول:
-    // البحث في كل العناصر القابلة للنقر بدل افتراض tag واحد.
+
+    // ثانيًا: افتح زر ترتيب التعليقات ثم اختر Newest.
     const sort=exactOrContains(document,['sort comments','ترتيب التعليقات','comment sorting','ترتيب التعليقات حسب']);
     if(sort){
       await safeClick(sort);
-      await wait(550);
-      const newest2=exactOrContains(document,['newest','الأحدث','الأحدث أولاً']);
-      if(newest2){
-        await safeClick(newest2);
-        await wait(350);
-        const ok2=exactOrContains(document,['ok','موافق','تم','done']);
-        if(ok2)await safeClick(ok2);
-        S.sortDone=true;
-        return true;
+      await wait(650);
+      newest=exactOrContains(document,['newest','الأحدث','الأحدث أولاً']);
+      if(newest){
+        await safeClick(newest);
+        await wait(450);
+        const ok=exactOrContains(document,['ok','موافق','تم','done']);
+        if(ok){
+          await safeClick(ok);
+          await wait(700);
+          S.sortDone=true;
+          return true;
+        }
       }
     }
     return false;
@@ -206,12 +219,19 @@
 
   window.__fbAutoOpenComments=async function(){
     try{
-      for(let attempt=0;attempt<8;attempt++){
-        const opened=await selectNewestOnce();
-        if(opened)await wait(450);
-        const commentButton=exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
-        if(commentButton && !comments().length){await safeClick(commentButton);await wait(850);}
-        const list=comments();
+      for(let attempt=0;attempt<10;attempt++){
+        let list=comments();
+        if(!list.length){
+          const commentButton=exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
+          if(commentButton){
+            await safeClick(commentButton);
+            await wait(900);
+          }
+        }
+        // لا نحاول اختيار Newest قبل ظهور واجهة التعليقات.
+        const sorted=await selectNewestOnce();
+        if(sorted)await wait(500);
+        list=comments();
         if(list.length){
           list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
           return true;
@@ -222,14 +242,15 @@
     }catch(e){return false;}
   };
 
-  window.__fbAutoProcessNext=async function(pub,priv,alt,sendPrivate,publicEnabled){
+  window.__fbAutoProcessNext=async function(pub,priv,alt,sendPrivate,publicEnabled,doLike){
     if(S.busy)return JSON.stringify({state:'busy'});
     S.busy=true;
     try{
       if(!S.sortDone){
         await selectNewestOnce();
       }
-      let c=comments().find(x=>!done(x));
+      const list=comments();
+      let c=list.find(x=>!done(x));
       if(!c){
         S.commentWaits=(S.commentWaits||0)+1;
         S.busy=false;
@@ -238,36 +259,46 @@
       }
       S.commentWaits=0;S.comment=c;
 
-      // نفس فكرة المشروع الأول: ابحث في جميع عناصر النقر ثم اضبط الهدف على التعليق الحالي.
-      let like=exactOrContains(c,['like','إعجاب','اعجبني'],['unlike','إلغاء الإعجاب','تم الإعجاب']);
-      let didLike=false;
-      if(like){
-        await safeClick(like);
-        await wait(800);
-        const after=exactOrContains(c,['unlike','إلغاء الإعجاب','تم الإعجاب','liked'],[]);
-        const pressed=like.getAttribute('aria-pressed')==='true';
-        if(after||pressed)didLike=true;
+      // بطاقة العميل هي comment/article نفسها؛ يتم تحديد أزرار Like وReply
+      // والرسالة من داخل البطاقة، وليس من خانة التعليق الرئيسية أسفل الصفحة.
+      try{c.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});}catch(e){}
+      await wait(300);
+
+      let didLike=false, publicDone=false, privateDone=false;
+      if(doLike){
+        const like=exactOrContains(c,['like','إعجاب','اعجبني'],['unlike','إلغاء الإعجاب','تم الإعجاب','liked']);
+        if(like){
+          const beforeLabel=norm(label(like));
+          await safeClick(like);
+          await wait(700);
+          const pressed=like.getAttribute('aria-pressed')==='true';
+          const after=exactOrContains(c,['unlike','إلغاء الإعجاب','تم الإعجاب','liked'],[]);
+          didLike=!!(pressed||after||norm(label(like))!==beforeLabel);
+        }
       }
 
-      let publicDone=false, privateDone=false;
-      if(publicEnabled)publicDone=await publicReply(c,pub);
-
-      const msg=exactOrContains(c,['send message','إرسال رسالة','message','رسالة']);
-      if(!msg){
-        if(alt&&!publicDone)publicDone=await publicReply(c,alt);
-        mark(c);S.busy=false;
-        return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:false});
+      if(publicEnabled){
+        publicDone=await publicReply(c,pub);
       }
 
       if(sendPrivate){
-        const p=await privateMsg(c,priv);
-        if(!p.sent){S.busy=false;return JSON.stringify({state:'error',message:'تعذر تحديد خانة الرسالة الخاصة أو زر الإرسال داخل نافذة العميل.'});}
-        S.stage='confirm';S.deadline=Date.now()+15000;S.busy=false;
-        return JSON.stringify({state:'confirm',like:didLike,public:publicDone});
+        const msg=exactOrContains(c,['send message','إرسال رسالة','message','رسالة']);
+        if(msg){
+          const p=await privateMsg(c,priv);
+          if(!p.sent){S.busy=false;return JSON.stringify({state:'error',message:'تعذر تحديد خانة الرسالة الخاصة أو زر الإرسال داخل بطاقة العميل.'});}
+          privateDone=true;
+          S.stage='confirm';S.deadline=Date.now()+15000;S.busy=false;
+          return JSON.stringify({state:'confirm',like:didLike,public:publicDone,private:true});
+        }
+      }
+
+      // إذا اختار المستخدم الرد العام، استخدم الرد البديل فقط عند عدم نجاح الرد الأساسي.
+      if(publicEnabled && !publicDone && alt){
+        publicDone=await publicReply(c,alt);
       }
 
       mark(c);S.busy=false;
-      return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:false});
+      return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:privateDone});
     }catch(e){S.busy=false;return JSON.stringify({state:'error',message:String(e)});}
   };
 

@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.content.SharedPreferences;
 import android.webkit.*;
 import android.widget.*;
+import android.content.Context;
 import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewTreeObserver;
@@ -30,11 +31,10 @@ public class MainActivity extends Activity {
     EditText url,
             publicReply,
             privateMessage,
-            noMessageReply,
-            limit,
-            delay;
+            noMessageReply;
 
-    CheckBox sendPrivate, publicEnabled;
+    Spinner limit, delay;
+    CheckBox sendPrivate, publicEnabled, doLike;
 
     Handler handler = new Handler(Looper.getMainLooper());
     SharedPreferences prefs;
@@ -92,12 +92,12 @@ public class MainActivity extends Activity {
         noMessageReply = findViewById(R.id.noMessageReply);
 
         limit = findViewById(R.id.limit);
-
         delay = findViewById(R.id.delay);
-
         sendPrivate = findViewById(R.id.sendPrivate);
-
         publicEnabled = findViewById(R.id.publicEnabled);
+        doLike = findViewById(R.id.doLike);
+
+        setupSpinners();
     }
 
     void loadPrefs() {
@@ -127,17 +127,11 @@ public class MainActivity extends Activity {
                 )
         );
 
-        limit.setText(
-                String.valueOf(
-                        prefs.getInt("limit", 10)
-                )
-        );
-
-        delay.setText(
-                String.valueOf(
-                        prefs.getInt("delay", 10)
-                )
-        );
+        setSpinnerValue(limit, prefs.getInt("limit", 10));
+        setSpinnerValue(delay, prefs.getInt("delay", 10));
+        doLike.setChecked(prefs.getBoolean("doLike", true));
+        sendPrivate.setChecked(prefs.getBoolean("sendPrivate", true));
+        publicEnabled.setChecked(prefs.getBoolean("publicEnabled", true));
     }
 
     void save() {
@@ -164,20 +158,52 @@ public class MainActivity extends Activity {
                         noMessageReply.getText().toString()
                 )
 
-                .putInt(
-                        "limit",
-                        num(limit, 10)
-                )
-
-                .putInt(
-                        "delay",
-                        Math.max(
-                                3,
-                                num(delay, 10)
-                        )
-                )
+                .putInt("limit", spinnerInt(limit, 10))
+                .putInt("delay", Math.max(1, spinnerInt(delay, 10)))
+                .putBoolean("doLike", doLike.isChecked())
+                .putBoolean("sendPrivate", sendPrivate.isChecked())
+                .putBoolean("publicEnabled", publicEnabled.isChecked())
                 .putInt("panelHeight", panelHeight)
                 .apply();
+    }
+
+    void setupSpinners() {
+        ArrayList<String> seconds = new ArrayList<>();
+        for (int i = 1; i <= 300; i++) seconds.add(String.valueOf(i));
+        ArrayList<String> operations = new ArrayList<>();
+        for (int i = 1; i <= 1000; i++) operations.add(String.valueOf(i));
+
+        ArrayAdapter<String> secondsAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, seconds) {
+            @Override public View getView(int position, View convertView, android.view.ViewGroup parent) {
+                TextView v = (TextView) super.getView(position, convertView, parent);
+                v.setPadding(dp(8), dp(8), dp(8), dp(8));
+                return v;
+            }
+        };
+        secondsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        delay.setAdapter(secondsAdapter);
+
+        ArrayAdapter<String> operationsAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, operations) {
+            @Override public View getView(int position, View convertView, android.view.ViewGroup parent) {
+                TextView v = (TextView) super.getView(position, convertView, parent);
+                v.setPadding(dp(8), dp(8), dp(8), dp(8));
+                return v;
+            }
+        };
+        operationsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        limit.setAdapter(operationsAdapter);
+    }
+
+    void setSpinnerValue(Spinner s, int value) {
+        if (s == null || s.getAdapter() == null) return;
+        int max = s.getAdapter().getCount();
+        int pos = Math.max(0, Math.min(max - 1, value - 1));
+        s.setSelection(pos, false);
+    }
+
+    int spinnerInt(Spinner s, int d) {
+        try { return Integer.parseInt(String.valueOf(s.getSelectedItem())); }
+        catch (Exception e) { return d; }
     }
 
     int num(EditText e, int d) {
@@ -383,8 +409,7 @@ public class MainActivity extends Activity {
                                 || publicReply.hasFocus()
                                 || privateMessage.hasFocus()
                                 || noMessageReply.hasFocus()
-                                || limit.hasFocus()
-                                || delay.hasFocus();
+
 
                         if (keyboardVisible && !appFieldFocused) {
                             if (controlPanel.getVisibility() != View.GONE) {
@@ -524,6 +549,11 @@ public class MainActivity extends Activity {
             return;
         }
 
+        if (!doLike.isChecked() && !publicEnabled.isChecked() && !sendPrivate.isChecked()) {
+            addLog("اختر عملية واحدة على الأقل: لايك أو رد عام أو إرسال على الخاص.");
+            return;
+        }
+
         running = true;
 
         processed = 0;
@@ -588,6 +618,8 @@ public class MainActivity extends Activity {
                         + sendPrivate.isChecked()
                         + ","
                         + publicEnabled.isChecked()
+                        + ","
+                        + doLike.isChecked()
                         + ")";
 
         web.evaluateJavascript(
@@ -740,7 +772,7 @@ public class MainActivity extends Activity {
                         if (
                                 processed
                                 >=
-                                num(limit, 10)
+                                spinnerInt(limit, 10)
                         ) {
 
                             finish(
@@ -754,7 +786,7 @@ public class MainActivity extends Activity {
                                 worker,
                                 Math.max(
                                         3000,
-                                        num(delay, 10)
+                                        spinnerInt(delay, 10)
                                                 * 1000L
                                 )
                         );
@@ -828,7 +860,7 @@ public class MainActivity extends Activity {
                                                 worker,
                                                 Math.max(
                                                         1000,
-                                                        num(delay, 10)
+                                                        spinnerInt(delay, 10)
                                                                 * 1000L
                                                 )
                                         );

@@ -7,8 +7,26 @@
 <EditText android:id="@+id/publicReply" android:hint="الرد العام (استخدم [اسم العميل])" android:inputType="textCapSentences|textMultiLine" android:minLines="2" android:maxLines="4" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <EditText android:id="@+id/privateMessage" android:hint="الرسالة الخاصة" android:inputType="textCapSentences|textMultiLine" android:minLines="2" android:maxLines="4" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <EditText android:id="@+id/noMessageReply" android:hint="الرد البديل لمن لا يظهر له إرسال رسالة" android:inputType="textCapSentences|textMultiLine" android:minLines="2" android:maxLines="4" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content"><EditText android:id="@+id/limit" android:hint="عدد الردود" android:text="10" android:inputType="number" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/><EditText android:id="@+id/delay" android:hint="الفاصل بالثواني" android:text="10" android:inputType="number" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/></LinearLayout>
-<LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content"><CheckBox android:id="@+id/sendPrivate" android:text="إرسال الخاص" android:checked="true" android:layout_width="wrap_content" android:layout_height="wrap_content"/><CheckBox android:id="@+id/publicEnabled" android:text="الرد العام" android:checked="true" android:layout_width="wrap_content" android:layout_height="wrap_content"/></LinearLayout>
+
+<LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="4dp">
+<TextView android:text="الفاصل الزمني بين العمليات (ثانية)" android:textStyle="bold" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:paddingEnd="6dp"/>
+<Spinner android:id="@+id/delay" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:spinnerMode="dropdown" android:contentDescription="الفاصل الزمني بالثواني"/>
+</LinearLayout>
+
+<LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+<TextView android:text="عدد العمليات في كل مرة" android:textStyle="bold" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:paddingEnd="6dp"/>
+<Spinner android:id="@+id/limit" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:spinnerMode="dropdown" android:contentDescription="عدد العمليات"/>
+</LinearLayout>
+
+<TextView android:text="اختر العمليات التي تريد تنفيذها لكل عميل" android:textStyle="bold" android:paddingTop="6dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+<CheckBox android:id="@+id/doLike" android:text="لايك" android:checked="true" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+<CheckBox android:id="@+id/sendPrivate" android:text="إرسال على الخاص" android:checked="true" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+<CheckBox android:id="@+id/publicEnabled" android:text="رد عام" android:checked="true" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+</LinearLayout>
+
+<TextView android:text="يحدد التطبيق بطاقة كل عميل من التعليق نفسه، ثم ينفذ فقط الاختيارات المفعلة أعلاه." android:textSize="12sp" android:textColor="#555555" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
 <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content"><Button android:id="@+id/open" android:text="فتح المنشور" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/><Button android:id="@+id/start" android:text="بدء" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/><Button android:id="@+id/stop" android:text="إيقاف" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/></LinearLayout>
 <TextView android:id="@+id/status" android:text="متوقف" android:paddingTop="4dp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/counters" android:text="تمت المعالجة: 0 | Likes: 0 | ردود: 0 | خاص: 0" android:layout_width="match_parent" android:layout_height="wrap_content"/>
