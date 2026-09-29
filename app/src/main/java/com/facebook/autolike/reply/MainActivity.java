@@ -42,6 +42,7 @@ public class MainActivity extends Activity {
     boolean running = false;
     boolean humanCheckMode = false;
     boolean openCommentsAfterLoad = false;
+    boolean postPrepared = false;
 
     int processed = 0;
     int likes = 0;
@@ -487,6 +488,7 @@ public class MainActivity extends Activity {
 
         exitHumanCheckMode();
         openCommentsAfterLoad = true;
+        postPrepared = false;
         web.loadUrl(u);
 
         addLog(
@@ -568,7 +570,7 @@ public class MainActivity extends Activity {
         );
 
         addLog(
-                "بدأت معالجة المنشور الحالي فقط."
+                "بدأت معالجة المنشور الحالي فقط — جاري تجهيز التعليقات واختيار «الأحدث» تلقائيًا."
         );
 
         worker = new Runnable() {
@@ -587,6 +589,30 @@ public class MainActivity extends Activity {
     }
 
     void pollState() {
+
+        if (!postPrepared) {
+            web.evaluateJavascript(
+                    "window.__fbAutoPreparePost ? window.__fbAutoPreparePost() : JSON.stringify({state:\"error\",message:\"أداة تجهيز المنشور غير موجودة.\"})",
+                    v -> {
+                        if (!running) return;
+                        String r = decode(v);
+                        if (r.contains("\"state\":\"ready\"")) {
+                            postPrepared = true;
+                            addLog("✅ " + extractMessage(r, "تم تجهيز التعليقات."));
+                            handler.postDelayed(worker, 400);
+                        } else if (r.contains("\"state\":\"waiting\"")) {
+                            addLog("⏳ " + extractMessage(r, "التعليقات لم تجهز بعد؛ سأحاول مرة أخرى."));
+                            handler.postDelayed(worker, 1200);
+                        } else if (r.contains("\"state\":\"error\"")) {
+                            finish("⚠️ توقف قبل معالجة أي تعليق: " + extractMessage(r, "تعذر تجهيز المنشور."));
+                        } else {
+                            addLog("⏳ لم تصل نتيجة تجهيز المنشور بعد؛ إعادة المحاولة.");
+                            handler.postDelayed(worker, 900);
+                        }
+                    }
+            );
+            return;
+        }
 
         String pub =
                 q(
@@ -803,7 +829,7 @@ public class MainActivity extends Activity {
                     ) {
 
                         finish(
-                                "⚠️ " + r
+                                "⚠️ " + extractMessage(r, "حدث خطأ غير محدد داخل صفحة Facebook.")
                         );
 
                         return;
@@ -885,6 +911,15 @@ public class MainActivity extends Activity {
                 },
                 500
         );
+    }
+
+    String extractMessage(String json, String fallback) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(json);
+            String m = o.optString("message", "").trim();
+            if (!m.isEmpty()) return m;
+        } catch (Exception ignored) {}
+        return fallback;
     }
 
     void finish(String msg) {

@@ -2,11 +2,13 @@
   if(window.__fbAutoReady)return;
   window.__fbAutoReady=true;
 
-  const S={busy:false,comment:null,stage:'idle',deadline:0,commentWaits:0,sortDone:false};
+  const S={busy:false,comment:null,stage:'idle',deadline:0,commentWaits:0,sortDone:false,lastDiag:'',openAttempts:0};
   const T=e=>(e&&((e.innerText||e.textContent)||'' )).replace(/\s+/g,' ').trim();
   const A=e=>e?((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('data-tooltip-content')||'' )).replace(/\s+/g,' ').trim():'';
   const V=e=>!!(e&&e.offsetParent!==null&&getComputedStyle(e).visibility!=='hidden');
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  function diag(msg){S.lastDiag=String(msg||'');return S.lastDiag;}
+  window.__fbAutoGetDiag=function(){return JSON.stringify({state:'diag',message:S.lastDiag||''});};
 
   // مستوحى من طريقة المشروع الأول: لا نعتمد على عنصر button فقط.
   // Facebook قد يرسم الزر كـ span/div مع role=button.
@@ -144,43 +146,89 @@
   }
 
   async function selectNewestOnce(){
-    if(S.sortDone)return true;
+    if(S.sortDone){diag('تم اختيار «الأحدث» بالفعل لهذا المنشور.');return true;}
 
-    // أولًا: إذا كانت نافذة ترتيب التعليقات مفتوحة بالفعل، اختر Newest مرة واحدة.
+    // إذا كانت نافذة ترتيب التعليقات مفتوحة بالفعل، اختر Newest ثم OK مرة واحدة.
     let newest=exactOrContains(document,['newest','الأحدث','الأحدث أولاً']);
     if(newest){
+      diag('ظهرت قائمة ترتيب التعليقات؛ جاري اختيار «الأحدث».');
       await safeClick(newest);
       await wait(450);
       const ok=exactOrContains(document,['ok','موافق','تم','done']);
       if(ok){
         await safeClick(ok);
-        await wait(700);
+        await wait(900);
         S.sortDone=true;
+        diag('تم اختيار «الأحدث» والضغط على OK مرة واحدة.');
         return true;
       }
+      diag('تم العثور على «الأحدث» لكن زر OK لم يظهر بعد.');
       return false;
     }
 
-    // ثانيًا: افتح زر ترتيب التعليقات ثم اختر Newest.
+    // افتح قائمة الترتيب ثم اختر Newest.
     const sort=exactOrContains(document,['sort comments','ترتيب التعليقات','comment sorting','ترتيب التعليقات حسب']);
     if(sort){
+      diag('تم العثور على زر ترتيب التعليقات؛ جاري فتحه.');
       await safeClick(sort);
-      await wait(650);
+      await wait(800);
       newest=exactOrContains(document,['newest','الأحدث','الأحدث أولاً']);
       if(newest){
+        diag('تم فتح ترتيب التعليقات؛ جاري اختيار «الأحدث».');
         await safeClick(newest);
         await wait(450);
         const ok=exactOrContains(document,['ok','موافق','تم','done']);
         if(ok){
           await safeClick(ok);
-          await wait(700);
+          await wait(900);
           S.sortDone=true;
+          diag('تم اختيار «الأحدث» والضغط على OK مرة واحدة.');
           return true;
         }
+        diag('تم اختيار «الأحدث» لكن زر OK لم يظهر.');
+        return false;
       }
+      diag('فتحت قائمة ترتيب التعليقات لكن خيار «الأحدث» لم يظهر.');
+      return false;
     }
+
+    diag('لم أجد زر ترتيب التعليقات أو قائمة «الأحدث» في الصفحة الحالية.');
     return false;
   }
+
+  window.__fbAutoPreparePost=async function(){
+    try{
+      S.openAttempts=(S.openAttempts||0)+1;
+      let list=comments();
+      if(!list.length){
+        const commentButton=exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
+        if(commentButton){
+          diag('لم تكن التعليقات مفتوحة؛ تم العثور على زر التعليقات وجاري فتحه.');
+          await safeClick(commentButton);
+          await wait(1200);
+        }else{
+          diag('لم أجد زر فتح التعليقات في الصفحة الحالية.');
+          return JSON.stringify({state:'error',message:S.lastDiag});
+        }
+      }
+      let sorted=await selectNewestOnce();
+      if(!sorted){
+        return JSON.stringify({state:'waiting',message:S.lastDiag,tries:S.openAttempts});
+      }
+      await wait(500);
+      list=comments();
+      if(list.length){
+        try{list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});}catch(e){}
+        diag('تم تجهيز التعليقات بنجاح، والترتيب الحالي «الأحدث».');
+        return JSON.stringify({state:'ready',message:S.lastDiag,count:list.length});
+      }
+      diag('تم اختيار «الأحدث»، لكن لم أجد بطاقات تعليقات قابلة للمعالجة حتى الآن.');
+      return JSON.stringify({state:'waiting',message:S.lastDiag,tries:S.openAttempts});
+    }catch(e){
+      diag('خطأ أثناء تجهيز المنشور: '+(e&&e.message?e.message:String(e)));
+      return JSON.stringify({state:'error',message:S.lastDiag});
+    }
+  };
 
   async function publicReply(c,text){
     const before=new Set(textboxes());
@@ -218,28 +266,13 @@
   }
 
   window.__fbAutoOpenComments=async function(){
-    try{
-      for(let attempt=0;attempt<10;attempt++){
-        let list=comments();
-        if(!list.length){
-          const commentButton=exactOrContains(document,['comments','comment','التعليقات','تعليقات']);
-          if(commentButton){
-            await safeClick(commentButton);
-            await wait(900);
-          }
-        }
-        // لا نحاول اختيار Newest قبل ظهور واجهة التعليقات.
-        const sorted=await selectNewestOnce();
-        if(sorted)await wait(500);
-        list=comments();
-        if(list.length){
-          list[0].scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
-          return true;
-        }
-        await wait(700);
-      }
-      return false;
-    }catch(e){return false;}
+    for(let attempt=0;attempt<10;attempt++){
+      const r=JSON.parse(await window.__fbAutoPreparePost());
+      if(r.state==='ready')return true;
+      if(r.state==='error')return false;
+      await wait(700);
+    }
+    return false;
   };
 
   window.__fbAutoProcessNext=async function(pub,priv,alt,sendPrivate,publicEnabled,doLike){
@@ -247,11 +280,13 @@
     S.busy=true;
     try{
       if(!S.sortDone){
-        await selectNewestOnce();
+        const sorted=await selectNewestOnce();
+        if(!sorted){S.busy=false;return JSON.stringify({state:'error',message:S.lastDiag||'تعذر اختيار ترتيب «الأحدث».'});}
       }
       const list=comments();
       let c=list.find(x=>!done(x));
       if(!c){
+        diag('تم اختيار «الأحدث»، لكن لم أجد تعليقًا جديدًا قابلًا للمعالجة الآن.');
         S.commentWaits=(S.commentWaits||0)+1;
         S.busy=false;
         if(S.commentWaits<=12)return JSON.stringify({state:'waiting',tries:S.commentWaits});
@@ -266,6 +301,7 @@
 
       let didLike=false, publicDone=false, privateDone=false;
       if(doLike){
+        diag('تم تحديد بطاقة العميل؛ جاري البحث عن زر «لايك» داخل نفس التعليق.');
         const like=exactOrContains(c,['like','إعجاب','اعجبني'],['unlike','إلغاء الإعجاب','تم الإعجاب','liked']);
         if(like){
           const beforeLabel=norm(label(like));
@@ -274,19 +310,24 @@
           const pressed=like.getAttribute('aria-pressed')==='true';
           const after=exactOrContains(c,['unlike','إلغاء الإعجاب','تم الإعجاب','liked'],[]);
           didLike=!!(pressed||after||norm(label(like))!==beforeLabel);
-        }
+          if(!didLike)diag('تم الضغط على «لايك» لكن الصفحة لم تؤكد تغيّر حالته.'); else diag('تم تنفيذ اللايك على التعليق الحالي.');
+        }else{diag('لم أجد زر «لايك» داخل بطاقة العميل الحالية.');}
       }
 
       if(publicEnabled){
+        diag('جاري فتح الرد العام داخل نفس بطاقة العميل.');
         publicDone=await publicReply(c,pub);
+        if(!publicDone)diag('تعذر تحديد خانة الرد العام أو زر إرسال الرد داخل بطاقة العميل.'); else diag('تم إرسال الرد العام على التعليق الحالي.');
       }
 
       if(sendPrivate){
+        diag('جاري البحث عن زر إرسال الرسالة الخاصة داخل بطاقة العميل.');
         const msg=exactOrContains(c,['send message','إرسال رسالة','message','رسالة']);
         if(msg){
           const p=await privateMsg(c,priv);
-          if(!p.sent){S.busy=false;return JSON.stringify({state:'error',message:'تعذر تحديد خانة الرسالة الخاصة أو زر الإرسال داخل بطاقة العميل.'});}
+          if(!p.sent){S.busy=false;diag('وجدت زر الرسالة الخاصة، لكن تعذر تحديد خانة الرسالة أو زر الإرسال.');return JSON.stringify({state:'error',message:S.lastDiag});}
           privateDone=true;
+          diag('تم إرسال الرسالة الخاصة، وفي انتظار تأكيد Facebook إن ظهر.');
           S.stage='confirm';S.deadline=Date.now()+15000;S.busy=false;
           return JSON.stringify({state:'confirm',like:didLike,public:publicDone,private:true});
         }
@@ -297,7 +338,7 @@
         publicDone=await publicReply(c,alt);
       }
 
-      mark(c);S.busy=false;
+      mark(c);diag('اكتملت العمليات المحددة للعميل الحالي.');S.busy=false;
       return JSON.stringify({state:'processed',like:didLike,public:publicDone,private:privateDone});
     }catch(e){S.busy=false;return JSON.stringify({state:'error',message:String(e)});}
   };
