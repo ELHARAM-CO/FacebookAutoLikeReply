@@ -242,8 +242,8 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
 
         // Fit Facebook content to the available WebView width.
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(false);
+        s.setUseWideViewPort(false);
         web.setInitialScale(0);
 
         web.setWebViewClient(
@@ -287,7 +287,7 @@ public class MainActivity extends Activity {
         web.setOverScrollMode(WebView.OVER_SCROLL_ALWAYS);
         web.setFocusable(true);
         web.setFocusableInTouchMode(true);
-        web.setNestedScrollingEnabled(false);
+        web.setNestedScrollingEnabled(true);
 
         // لو ظهرت واجهة "تأكيد أنك إنسان"، أخفِ لوحة الإعدادات فورًا
         // ليأخذ Facebook كامل مساحة الشاشة وتظهر أزرار التحقق أسفلها.
@@ -320,23 +320,28 @@ public class MainActivity extends Activity {
 
     void enterHumanCheckMode() {
         humanCheckMode = true;
-        // أثناء التحقق اليدوي أعطِ Facebook كل مساحة الشاشة، بما فيها أسفل الشاشة.
-        // لا نقوم بحل أو تجاوز التحقق تلقائيًا؛ المستخدم ينفذه بنفسه.
-        controlPanel.setVisibility(View.GONE);
-        resizeHandle.setVisibility(View.GONE);
-        web.setVisibility(View.VISIBLE);
+        if (controlPanel.getVisibility() != View.GONE) {
+            controlPanel.setVisibility(View.GONE);
+        }
+        if (resizeHandle.getVisibility() != View.GONE) {
+            resizeHandle.setVisibility(View.GONE);
+        }
         web.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        web.post(() -> web.evaluateJavascript(
+        web.evaluateJavascript(
                 "window.__fbAutoBringHumanCheckIntoView ? window.__fbAutoBringHumanCheckIntoView() : false",
                 null
-        ));
+        );
     }
 
     void exitHumanCheckMode() {
         if (!humanCheckMode) return;
         humanCheckMode = false;
-        controlPanel.setVisibility(View.VISIBLE);
-        resizeHandle.setVisibility(View.VISIBLE);
+        if (controlPanel.getVisibility() != View.VISIBLE) {
+            controlPanel.setVisibility(View.VISIBLE);
+        }
+        if (resizeHandle.getVisibility() != View.VISIBLE) {
+            resizeHandle.setVisibility(View.VISIBLE);
+        }
     }
 
     void setupHumanCheckWatcher() {
